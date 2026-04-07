@@ -210,7 +210,24 @@ void CartridgeSettingsView::DrawBackupRAMSettings() {
         }
         ImGui::EndCombo();
     }
+    // Per-game external saves: when enabled, each game gets its own backup RAM image
+    // stored under <profile>/backup/games/. The image path field is disabled in this mode.
+    if (MakeDirty(ImGui::Checkbox("Create external backup memory images per game", &settings.perGame))) {
+        // Immediately apply the new setting by reloading the appropriate cart image,
+        // mirroring the behavior of the internal per-game saves checkbox
+        m_context.EnqueueEvent(events::gui::LoadRecommendedGameCartridge());
+    }
+    widgets::ExplanationTooltip(
+        fmt::format("When enabled, a separate external backup memory image will be created for each game.\n"
+                    "Images are stored under {}.\n"
+                    "The Image path setting below is ignored while this option is enabled.",
+                    m_context.profile.GetPath(ProfilePath::BackupMemory) / "games")
+            .c_str(),
+        m_context.displayScale);
 
+    if (settings.perGame) {
+        ImGui::BeginDisabled();
+    }
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Image path:");
     ImGui::SameLine();
@@ -237,6 +254,9 @@ void CartridgeSettingsView::DrawBackupRAMSettings() {
                                                           &CartridgeSettingsView::ProcessLoadBackupImageError>,
         }));
     }
+    if (settings.perGame) {
+        ImGui::EndDisabled();
+    }
 
     if (ImGui::Button("Open backup memory manager")) {
         m_context.EnqueueEvent(events::gui::OpenBackupMemoryManager());
@@ -245,6 +265,21 @@ void CartridgeSettingsView::DrawBackupRAMSettings() {
     if (currSize != 0 && CapacityToSize(settings.capacity) != currSize && !currPath.empty() &&
         !settings.imagePath.empty() && currPath == settings.imagePath) {
         ImGui::TextUnformatted("WARNING: Changing the size of the backup memory image will format it!");
+    }
+
+    // Show the path of the currently mounted per-game external backup RAM image
+    if (settings.perGame) {
+        ImGui::PushTextWrapPos(ImGui::GetContentRegionAvail().x);
+        if (!currPath.empty()) {
+            ImGui::Text("Currently using external backup memory image from %s", fmt::format("{}", currPath).c_str());
+            ImGui::PopTextWrapPos();
+            if (ImGui::Button("Open containing directory##ext_bup")) {
+                SDL_OpenURL(fmt::format("file:///{}", currPath.parent_path()).c_str());
+            }
+        } else {
+            ImGui::TextUnformatted("A per-game external backup memory image will be created when a game is loaded.");
+            ImGui::PopTextWrapPos();
+        }
     }
 }
 

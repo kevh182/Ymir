@@ -153,6 +153,9 @@ private:
 
     void ScanROMCarts();
     void LoadRecommendedCartridge();
+    // Loads an existing per-game external backup RAM image at cartPath, or creates
+    // a new one if it does not exist. Never formats an existing image.
+    void InsertPerGameBackupRAMCart(std::filesystem::path cartPath);
 
     void LoadSaveStates();
     void ClearSaveStates();

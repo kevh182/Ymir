@@ -1084,7 +1084,8 @@ void Settings::ResetToDefaults() {
 
     cartridge.type = Settings::Cartridge::Type::None;
     cartridge.backupRAM.imagePath = "";
-    cartridge.backupRAM.capacity = Settings::Cartridge::BackupRAM::Capacity::_32Mbit;
+    cartridge.backupRAM.capacity = Settings::Cartridge::BackupRAM::Capacity::_4Mbit; // Default to 4 Mbit to match real Saturn external memory size
+    cartridge.backupRAM.perGame = false; // per-game external saves disabled by default
     cartridge.dram.capacity = Settings::Cartridge::DRAM::Capacity::_32Mbit;
     cartridge.rom.imagePath = "";
     cartridge.autoLoadGameCarts = true;
@@ -1612,6 +1613,7 @@ SettingsLoadResult Settings::Load(const std::filesystem::path &path) {
         if (auto tblBackupRAM = tblCart["BackupRAM"]) {
             Parse(tblBackupRAM, "ImagePath", cartridge.backupRAM.imagePath);
             Parse(tblBackupRAM, "Capacity", cartridge.backupRAM.capacity);
+            Parse(tblBackupRAM, "PerGame", cartridge.backupRAM.perGame);
             cartridge.backupRAM.imagePath = Absolute(ProfilePath::PersistentState, cartridge.backupRAM.imagePath);
         }
         if (auto tblDRAM = tblCart["DRAM"]) {
@@ -2001,6 +2003,7 @@ SettingsSaveResult Settings::Save() {
             {"BackupRAM", toml::table{{
                 {"ImagePath", Proximate(ProfilePath::PersistentState, cartridge.backupRAM.imagePath).native()},
                 {"Capacity", ToTOML(cartridge.backupRAM.capacity)},
+                {"PerGame", cartridge.backupRAM.perGame},
             }}},
             {"DRAM", toml::table{{
                 {"Capacity", ToTOML(cartridge.dram.capacity)},

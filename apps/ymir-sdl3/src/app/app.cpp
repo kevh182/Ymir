@@ -454,7 +454,15 @@ int App::Run(const CommandLineOptions &options) {
     } else if (settings.general.rememberLastLoadedDisc && !m_context.state.recentDiscs.empty()) {
         LoadDiscImage(m_context.state.recentDiscs[0], false);
     } else {
-        m_context.EnqueueEvent(events::emu::InsertCartridgeFromSettings());
+        if (settings.cartridge.type == Settings::Cartridge::Type::BackupRAM && settings.cartridge.backupRAM.perGame) {
+            // No disc loaded — use a size-named nodisc file instead of the last game's image
+            const uint32 sizeMiB = CapacityToSize(settings.cartridge.backupRAM.capacity) * 8 / 1024 / 1024;
+            const auto nodiscPath = m_context.profile.GetPath(ProfilePath::BackupMemory) / "games" /
+                                    fmt::format("bup-ext-{}M-nodisc.bin", sizeMiB);
+            InsertPerGameBackupRAMCart(nodiscPath);
+        } else {
+            m_context.EnqueueEvent(events::emu::InsertCartridgeFromSettings());
+        }
     }
 
     // Load IPL ROM
@@ -3934,6 +3942,15 @@ void App::EmulatorThread() {
                 if (settings.system.internalBackupRAMPerGame) {
                     m_context.EnqueueEvent(events::emu::LoadInternalBackupMemory());
                 }
+                if (settings.cartridge.type == Settings::Cartridge::Type::BackupRAM &&
+                    settings.cartridge.backupRAM.perGame) {
+                    // Disc ejected — switch external cart back to the shared nodisc image
+                    // so the previous game's saves are no longer accessible in the backup manager
+                    const uint32 sizeMiB = CapacityToSize(settings.cartridge.backupRAM.capacity) * 8 / 1024 / 1024;
+                    const auto nodiscPath = m_context.profile.GetPath(ProfilePath::BackupMemory) / "games" /
+                                            fmt::format("bup-ext-{}M-nodisc.bin", sizeMiB);
+                    InsertPerGameBackupRAMCart(nodiscPath);
+                }
                 m_context.DisplayMessage("Disc ejected");
                 break;
             }
@@ -5362,8 +5379,22 @@ void App::LoadRecommendedCartridge() {
         const auto &disc = m_context.saturn.GetDisc();
         info = ymir::db::GetGameInfo(disc.header.productNumber, m_context.saturn.GetDiscHash());
     }
+    // Compute the per-game external path before acquiring the cart lock.
+    // GetPerGameExternalBackupRAMPath reads disc state, so it must be called
+    // while the disc lock is released and before the cart lock is acquired
+    // to preserve the disc-before-cart lock ordering used throughout.
+    std::filesystem::path perGamePath{};
+    if (m_settings.cartridge.type == Settings::Cartridge::Type::BackupRAM && m_settings.cartridge.backupRAM.perGame) {
+        const auto bupSize = CapacityToBupSize(m_settings.cartridge.backupRAM.capacity);
+        perGamePath = m_context.GetPerGameExternalBackupRAMPath(bupSize);
+    }
+
     if (info == nullptr) {
-        m_context.EnqueueEvent(events::emu::InsertCartridgeFromSettings());
+        if (!perGamePath.empty()) {
+            InsertPerGameBackupRAMCart(perGamePath);
+        } else {
+            m_context.EnqueueEvent(events::emu::InsertCartridgeFromSettings());
+        }
         return;
     }
 
@@ -5372,7 +5403,12 @@ void App::LoadRecommendedCartridge() {
     std::unique_lock lock{m_context.locks.cart};
     using Cart = ymir::db::Cartridge;
     switch (info->GetCartridge()) {
-    case Cart::None: break;
+    case Cart::None:
+        if (!perGamePath.empty()) {
+            InsertPerGameBackupRAMCart(perGamePath);
+        }
+        break;
+
     case Cart::DRAM8Mbit: m_context.EnqueueEvent(events::emu::Insert8MbitDRAMCartridge()); break;
     case Cart::DRAM32Mbit: m_context.EnqueueEvent(events::emu::Insert32MbitDRAMCartridge()); break;
     case Cart::DRAM48Mbit: m_context.EnqueueEvent(events::emu::Insert48MbitDRAMCartridge()); break;
@@ -5423,6 +5459,31 @@ void App::LoadRecommendedCartridge() {
     }
 
     // TODO: notify user
+}
+
+void App::InsertPerGameBackupRAMCart(std::filesystem::path cartPath) {
+    const auto bupSize = CapacityToBupSize(m_settings.cartridge.backupRAM.capacity);
+
+    // Ensure the per-game backup directory exists before attempting to load or create the image
+    std::error_code mkdirError{};
+    std::filesystem::create_directories(cartPath.parent_path(), mkdirError);
+
+    std::error_code error{};
+    ymir::bup::BackupMemory bupMem{};
+    if (std::filesystem::is_regular_file(cartPath)) {
+        // Image already exists — load it without formatting to preserve saves
+        bupMem.LoadFrom(cartPath, false, error);
+    } else {
+        // Image does not exist yet — create a fresh one
+        bupMem.CreateFrom(cartPath, false, error, bupSize);
+    }
+
+    if (error) {
+        m_context.EnqueueEvent(
+            events::gui::ShowError(fmt::format("Failed to load external backup memory: {}", error.message())));
+    } else {
+        m_context.EnqueueEvent(events::emu::InsertBackupMemoryCartridge(cartPath));
+    }
 }
 
 void App::LoadSaveStates() {
@@ -5762,7 +5823,13 @@ bool App::LoadDiscImage(std::filesystem::path path, bool showErrorModal) {
     // Load cartridge
     if (settings.cartridge.autoLoadGameCarts) {
         LoadRecommendedCartridge();
+    } else if (settings.cartridge.type == Settings::Cartridge::Type::BackupRAM &&
+               settings.cartridge.backupRAM.perGame) {
+        // Per-game external saves enabled — use a game-specific image path
+        const auto bupSize = CapacityToBupSize(settings.cartridge.backupRAM.capacity);
+        InsertPerGameBackupRAMCart(m_context.GetPerGameExternalBackupRAMPath(bupSize));
     } else {
+
         m_context.EnqueueEvent(events::emu::InsertCartridgeFromSettings());
     }
 

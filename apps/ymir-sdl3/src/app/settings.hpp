@@ -520,6 +520,12 @@ struct Settings {
 
             enum Capacity { _4Mbit, _8Mbit, _16Mbit, _32Mbit };
             Capacity capacity;
+
+            // When true, a separate backup RAM image is created for each game under
+            // <profile>/backup/games/bup-ext-<title> [<code>].bin.
+            // When no disc is loaded, bup-ext-<size>M-nodisc.bin is used instead.
+            // The imagePath field is ignored while this is enabled.
+            bool perGame;
         } backupRAM;
 
         struct DRAM {
